@@ -12,5 +12,11 @@ window.COIN_DASH = {
     volume: 0.2,
     coin: [['square', 988, 988, 0.07], ['square', 1319, 1319, 0.14]],
     hit: [['sawtooth', 440, 70, 0.6]]
+  },
+  effects: {
+    // Sparkle burst when a coin is collected.
+    coinBurst: { count: 18, speed: [60, 220], lifespan: 450, scale: [0.9, 0] },
+    // Camera shake when a drone catches the player.
+    hitShake: { duration: 250, intensity: 0.02 }
   }
 };

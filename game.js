@@ -26,20 +26,45 @@ class CoinDash extends Phaser.Scene {
       const angle = (35 + i * 105) * Math.PI / 180;
       drone.body.setVelocity(Math.cos(angle) * c.droneSpeed, Math.sin(angle) * c.droneSpeed);
     }
+    this.coinBurst = this.createCoinBurst();
     this.physics.add.overlap(this.player, this.coin, () => {
       if (this.finished) return;
       this.score++;
       this.playSound('coin');
+      this.coinBurst.explode(c.effects.coinBurst.count, this.coin.x, this.coin.y);
       this.placeCoin();
     });
     this.physics.add.overlap(this.player, this.drones, () => {
       if (this.finished) return;
       this.playSound('hit');
+      this.cameras.main.shake(c.effects.hitShake.duration, c.effects.hitShake.intensity);
       this.finish('A drone caught you!');
     });
     this.cursors = this.input.keyboard.createCursorKeys();
     this.keys = this.input.keyboard.addKeys('W,A,S,D,R');
     this.input.keyboard.on('keydown-R', () => this.scene.restart());
+  }
+
+  // The spark texture is drawn at runtime, so the effect needs no image assets.
+  createCoinBurst() {
+    const c = COIN_DASH;
+    if (!this.textures.exists('spark')) {
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
+      g.fillStyle(0xffffff, 1).fillCircle(4, 4, 4);
+      g.generateTexture('spark', 8, 8);
+      g.destroy();
+    }
+    const { speed, lifespan, scale } = c.effects.coinBurst;
+    return this.add.particles(0, 0, 'spark', {
+      emitting: false,
+      speed: { min: speed[0], max: speed[1] },
+      angle: { min: 0, max: 360 },
+      lifespan,
+      scale: { start: scale[0], end: scale[1] },
+      alpha: { start: 1, end: 0 },
+      tint: [c.colors.coin, 0xffffff, 0xffe9a8],
+      blendMode: 'ADD'
+    });
   }
 
   placeCoin() {
