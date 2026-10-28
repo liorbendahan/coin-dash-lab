@@ -53,6 +53,15 @@ class CoinDash extends Phaser.Scene {
       this.playSound('hit');
       this.finish('A drone caught you!');
     });
+    this.homingDrones = this.physics.add.group();
+    this.homingTimer = this.time.addEvent({
+      delay: c.homingSpawnSeconds * 1000, loop: true, callback: () => this.spawnHomingDrone()
+    });
+    this.physics.add.overlap(this.player, this.homingDrones, () => {
+      if (this.finished || this.isShielded()) return;
+      this.playSound('hit');
+      this.finish('A homing drone caught you!');
+    });
     this.cursors = this.input.keyboard.createCursorKeys();
     this.keys = this.input.keyboard.addKeys('W,A,S,D,R');
     this.input.keyboard.on('keydown-R', () => this.scene.restart());
@@ -81,7 +90,22 @@ class CoinDash extends Phaser.Scene {
       if (this.shieldUntil > this.pausedAt) this.shieldUntil += pausedFor;
       this.physics.resume();
     }
+    this.homingTimer.paused = this.paused;
     this.pauseOverlay.setVisible(this.paused);
+  }
+
+  spawnHomingDrone() {
+    const c = COIN_DASH;
+    if (this.finished || this.homingDrones.countActive() >= c.homingMaxCount) return;
+    // Spawn far enough from the player to give them a moment to react.
+    let x, y;
+    do {
+      x = Phaser.Math.Between(25, c.width - 25);
+      y = Phaser.Math.Between(70, c.height - 25);
+    } while (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < c.homingSpawnMinDistance);
+    const drone = this.add.rectangle(x, y, 22, 22, c.colors.homingDrone).setAngle(45);
+    this.homingDrones.add(drone);
+    drone.body.setCollideWorldBounds(true);
   }
 
   placeCoin() {
@@ -175,6 +199,8 @@ class CoinDash extends Phaser.Scene {
       - Number(this.cursors.up.isDown || this.keys.W.isDown);
     const direction = new Phaser.Math.Vector2(dx, dy).normalize().scale(COIN_DASH.playerSpeed);
     this.player.body.setVelocity(direction.x, direction.y);
+    this.homingDrones.getChildren().forEach(drone =>
+      this.physics.moveToObject(drone, this.player, COIN_DASH.homingSpeed));
     this.updateShield();
     const seconds = Math.max(0, Math.ceil((this.deadline - this.time.now) / 1000));
     const shieldLeft = Math.ceil((this.shieldUntil - this.time.now) / 1000);
@@ -187,6 +213,7 @@ class CoinDash extends Phaser.Scene {
     if (this.finished) return;
     this.finished = true;
     this.physics.pause();
+    this.homingTimer.remove();
     const c = COIN_DASH;
     this.add.rectangle(c.width / 2, c.height / 2, 460, 150, 0x0a1120, 0.95);
     this.add.text(c.width / 2, c.height / 2,
