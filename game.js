@@ -12,6 +12,9 @@ class CoinDash extends Phaser.Scene {
     this.add.grid(c.width / 2, c.height / 2, c.width, c.height, 40, 40,
       c.colors.background, 1, 0x24334b, 0.45);
     this.hud = this.add.text(18, 12, '', { font: '18px monospace', color: '#ffffff' });
+    this.dashText = this.add.text(c.width - 18, 15, '', { font: '14px monospace' }).setOrigin(1, 0);
+    this.dashUntil = 0; // Time when the current dash ends.
+    this.dashReadyAt = 0; // Time when the player may dash again.
     // The halo sits behind the player and is only shown while the shield is active.
     this.halo = this.add.circle(c.width / 2, c.height / 2, 24, c.colors.shield, 0.35)
       .setStrokeStyle(3, c.colors.shield).setVisible(false);
@@ -63,8 +66,9 @@ class CoinDash extends Phaser.Scene {
       this.finish('A homing drone caught you!');
     });
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,R');
+    this.keys = this.input.keyboard.addKeys('W,A,S,D,R,SPACE');
     this.input.keyboard.on('keydown-R', () => this.scene.restart());
+    this.input.keyboard.on('keydown-SPACE', () => this.dash());
     this.input.keyboard.on('keydown-P', () => this.togglePause());
     this.input.keyboard.on('keydown-ESC', () => this.togglePause());
     this.pauseOverlay = this.add.container(c.width / 2, c.height / 2, [
@@ -88,6 +92,9 @@ class CoinDash extends Phaser.Scene {
       this.nextShieldAt += pausedFor;
       this.shieldExpiresAt += pausedFor;
       if (this.shieldUntil > this.pausedAt) this.shieldUntil += pausedFor;
+      // So do the dash and its cooldown.
+      if (this.dashUntil > this.pausedAt) this.dashUntil += pausedFor;
+      if (this.dashReadyAt > this.pausedAt) this.dashReadyAt += pausedFor;
       this.physics.resume();
     }
     this.homingTimer.paused = this.paused;
@@ -144,6 +151,23 @@ class CoinDash extends Phaser.Scene {
     return this.time.now < this.shieldUntil;
   }
 
+  dash() {
+    const { durationSeconds, cooldownSeconds } = COIN_DASH.dash;
+    if (this.finished || this.paused || this.time.now < this.dashReadyAt) return;
+    this.dashUntil = this.time.now + durationSeconds * 1000;
+    this.dashReadyAt = this.dashUntil + cooldownSeconds * 1000;
+  }
+
+  isDashing() {
+    return this.time.now < this.dashUntil;
+  }
+
+  updateDashText() {
+    const ready = this.time.now >= this.dashReadyAt;
+    this.dashText.setText(`Dash: ${ready ? 'READY' : 'COOLDOWN'}`)
+      .setColor(ready ? '#71e8ce' : '#8a96ab');
+  }
+
   // Shows the shield pickup pulsing and the player glowing while invincible.
   updateShield() {
     const c = COIN_DASH;
@@ -197,11 +221,13 @@ class CoinDash extends Phaser.Scene {
       - Number(this.cursors.left.isDown || this.keys.A.isDown);
     const dy = Number(this.cursors.down.isDown || this.keys.S.isDown)
       - Number(this.cursors.up.isDown || this.keys.W.isDown);
-    const direction = new Phaser.Math.Vector2(dx, dy).normalize().scale(COIN_DASH.playerSpeed);
+    const speed = COIN_DASH.playerSpeed * (this.isDashing() ? COIN_DASH.dash.speedMultiplier : 1);
+    const direction = new Phaser.Math.Vector2(dx, dy).normalize().scale(speed);
     this.player.body.setVelocity(direction.x, direction.y);
     this.homingDrones.getChildren().forEach(drone =>
       this.physics.moveToObject(drone, this.player, COIN_DASH.homingSpeed));
     this.updateShield();
+    this.updateDashText();
     const seconds = Math.max(0, Math.ceil((this.deadline - this.time.now) / 1000));
     const shieldLeft = Math.ceil((this.shieldUntil - this.time.now) / 1000);
     const shieldText = this.isShielded() ? `   Shield: ${shieldLeft}s` : '';
