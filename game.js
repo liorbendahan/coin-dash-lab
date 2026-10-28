@@ -29,9 +29,14 @@ class CoinDash extends Phaser.Scene {
     this.physics.add.overlap(this.player, this.coin, () => {
       if (this.finished) return;
       this.score++;
+      this.playSound('coin');
       this.placeCoin();
     });
-    this.physics.add.overlap(this.player, this.drones, () => this.finish('A drone caught you!'));
+    this.physics.add.overlap(this.player, this.drones, () => {
+      if (this.finished) return;
+      this.playSound('hit');
+      this.finish('A drone caught you!');
+    });
     this.cursors = this.input.keyboard.createCursorKeys();
     this.keys = this.input.keyboard.addKeys('W,A,S,D,R');
     this.input.keyboard.on('keydown-R', () => this.scene.restart());
@@ -47,6 +52,27 @@ class CoinDash extends Phaser.Scene {
     } while (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < 60);
     this.coin.setPosition(x, y);
     this.coin.body.reset(x, y);
+  }
+
+  // Sounds are synthesised with Web Audio, so the game still ships without audio assets.
+  playSound(name) {
+    const ctx = this.sound.context;
+    if (!ctx) return; // Web Audio unavailable: play silently.
+    const { volume } = COIN_DASH.sounds;
+    let t = ctx.currentTime;
+    for (const [type, from, to, seconds] of COIN_DASH.sounds[name]) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(from, t);
+      osc.frequency.exponentialRampToValueAtTime(to, t + seconds);
+      gain.gain.setValueAtTime(volume, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + seconds);
+      osc.connect(gain).connect(this.sound.destination);
+      osc.start(t);
+      osc.stop(t + seconds);
+      t += seconds;
+    }
   }
 
   update() {
