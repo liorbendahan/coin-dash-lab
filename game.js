@@ -7,6 +7,8 @@ class CoinDash extends Phaser.Scene {
   create() {
     const c = COIN_DASH;
     this.score = 0;
+    this.highScore = this.loadHighScore();
+    this.beatHighScore = false;
     this.finished = false;
     this.paused = false;
     this.deadline = this.time.now + c.roundSeconds * 1000;
@@ -63,6 +65,7 @@ class CoinDash extends Phaser.Scene {
     this.physics.add.overlap(this.player, this.coin, () => {
       if (this.finished) return;
       this.score++;
+      this.updateHighScore();
       this.playSound('coin');
       this.celebrateCoin(this.coin.x, this.coin.y);
       this.placeCoin();
@@ -185,6 +188,8 @@ class CoinDash extends Phaser.Scene {
     this.add.circle(28, 22, 8, c.colors.coin).setDepth(11);
     this.scoreText = this.add.text(44, 22, '0', { font: 'bold 20px monospace', color: hex(c.colors.coin) })
       .setOrigin(0, 0.5).setDepth(11);
+    this.bestText = this.add.text(96, 22, `Best ${this.highScore}`, { font: '16px monospace', color: '#9fb0c8' })
+      .setOrigin(0, 0.5).setDepth(11);
     this.shieldText = this.add.text(c.width / 2, 22, '', { font: 'bold 18px monospace', color: hex(c.colors.shield) })
       .setOrigin(0.5).setDepth(11);
     this.timeText = this.add.text(c.width - 18, 22, '', { font: 'bold 20px monospace', color: '#ffffff' })
@@ -253,6 +258,25 @@ class CoinDash extends Phaser.Scene {
     this.shockwave(x, y, c.colors.drone, 7, 600);
     this.player.setVisible(false);
     this.shieldHalo.setVisible(false);
+  }
+
+  // localStorage can throw (private mode, blocked storage), so fall back to 0 / skip saving.
+  loadHighScore() {
+    try {
+      return Number(localStorage.getItem(COIN_DASH.highScoreKey)) || 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  updateHighScore() {
+    if (this.score <= this.highScore) return;
+    this.highScore = this.score;
+    this.beatHighScore = true;
+    this.bestText.setText(`Best ${this.highScore}`).setColor(hex(COIN_DASH.colors.coin));
+    try {
+      localStorage.setItem(COIN_DASH.highScoreKey, String(this.highScore));
+    } catch (e) { /* Storage unavailable: keep the high score for this session only. */ }
   }
 
   placeCoin() {
@@ -393,11 +417,15 @@ class CoinDash extends Phaser.Scene {
     // When caught, hold the overlay back so the explosion plays out first.
     const delay = caught ? 350 : 0;
     this.tweens.add({ targets: dim, fillAlpha: 0.5, duration: 400, delay });
+    const highScoreText = this.beatHighScore ? 'New high score!' : `High score: ${this.highScore}`;
+    const body = { font: '20px monospace', color: '#ffffff' };
     const panel = this.add.container(c.width / 2, c.height / 2, [
-      this.add.rectangle(0, 0, 460, 180, 0x0a1120, 0.95).setStrokeStyle(2, accent),
-      this.add.text(0, -46, reason, { font: 'bold 28px monospace', color: hex(accent) }).setOrigin(0.5),
-      this.add.text(0, 22, `${this.score} coins collected\nPress R to try again`,
-        { font: '20px monospace', color: '#ffffff', align: 'center', lineSpacing: 12 }).setOrigin(0.5)
+      this.add.rectangle(0, 0, 460, 210, 0x0a1120, 0.95).setStrokeStyle(2, accent),
+      this.add.text(0, -62, reason, { font: 'bold 28px monospace', color: hex(accent) }).setOrigin(0.5),
+      this.add.text(0, -14, `${this.score} coins collected`, body).setOrigin(0.5),
+      this.add.text(0, 18, highScoreText, { font: 'bold 20px monospace',
+        color: this.beatHighScore ? hex(c.colors.coin) : '#9fb0c8' }).setOrigin(0.5),
+      this.add.text(0, 60, 'Press R to try again', body).setOrigin(0.5)
     ]).setDepth(20).setScale(0.6).setAlpha(0);
     this.tweens.add({ targets: panel, scale: 1, alpha: 1, duration: 380, delay: delay + 150, ease: 'Back.easeOut' });
   }
