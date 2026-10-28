@@ -12,6 +12,9 @@ class CoinDash extends Phaser.Scene {
     this.add.grid(c.width / 2, c.height / 2, c.width, c.height, 40, 40,
       c.colors.background, 1, 0x24334b, 0.45);
     this.hud = this.add.text(18, 12, '', { font: '18px monospace', color: '#ffffff' });
+    // The halo sits behind the player and is only shown while the shield is active.
+    this.halo = this.add.circle(c.width / 2, c.height / 2, 24, c.colors.shield, 0.35)
+      .setStrokeStyle(3, c.colors.shield).setVisible(false);
     this.player = this.add.rectangle(c.width / 2, c.height / 2, 24, 24, c.colors.player);
     this.physics.add.existing(this.player);
     this.player.body.setCollideWorldBounds(true);
@@ -19,6 +22,11 @@ class CoinDash extends Phaser.Scene {
     this.physics.add.existing(this.coin);
     this.coin.body.setCircle(9);
     this.placeCoin();
+    this.shield = this.add.circle(0, 0, 11, c.colors.shield).setStrokeStyle(3, 0xffffff, 0.8);
+    this.physics.add.existing(this.shield);
+    this.shield.body.setCircle(11);
+    this.hideShield();
+    this.shieldUntil = 0; // Time when the player's invincibility runs out.
     this.drones = this.physics.add.group();
     for (let i = 0; i < c.droneCount; i++) {
       const drone = this.add.rectangle(90 + i * 270, 100, 26, 26, c.colors.drone);
@@ -34,8 +42,14 @@ class CoinDash extends Phaser.Scene {
       this.placeCoin();
       this.speedUpDrones();
     });
+    this.physics.add.overlap(this.player, this.shield, () => {
+      if (this.finished || !this.shield.visible) return;
+      this.shieldUntil = this.time.now + c.shield.durationSeconds * 1000;
+      this.playSound('shield');
+      this.hideShield();
+    });
     this.physics.add.overlap(this.player, this.drones, () => {
-      if (this.finished) return;
+      if (this.finished || this.isShielded()) return;
       this.playSound('hit');
       this.finish('A drone caught you!');
     });
@@ -59,22 +73,70 @@ class CoinDash extends Phaser.Scene {
       this.physics.pause();
     } else {
       // Push the deadline back so time spent paused does not count against the round.
-      this.deadline += this.time.now - this.pausedAt;
+      const pausedFor = this.time.now - this.pausedAt;
+      this.deadline += pausedFor;
+      // Shield timers freeze while paused too.
+      this.nextShieldAt += pausedFor;
+      this.shieldExpiresAt += pausedFor;
+      if (this.shieldUntil > this.pausedAt) this.shieldUntil += pausedFor;
       this.physics.resume();
     }
     this.pauseOverlay.setVisible(this.paused);
   }
 
   placeCoin() {
+    this.placeAwayFromPlayer(this.coin);
+  }
+
+  // Avoid spawning items directly underneath the player.
+  placeAwayFromPlayer(item) {
     const c = COIN_DASH;
-    // Avoid spawning the next coin directly underneath the player.
     let x, y;
     do {
       x = Phaser.Math.Between(25, c.width - 25);
       y = Phaser.Math.Between(70, c.height - 25);
     } while (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < 60);
-    this.coin.setPosition(x, y);
-    this.coin.body.reset(x, y);
+    item.setPosition(x, y);
+    item.body.reset(x, y);
+  }
+
+  showShield() {
+    this.placeAwayFromPlayer(this.shield);
+    this.shield.setVisible(true);
+    this.shield.body.enable = true;
+    this.shieldExpiresAt = this.time.now + COIN_DASH.shield.lifetimeSeconds * 1000;
+  }
+
+  // Removes the shield item from the map and schedules the next one.
+  hideShield() {
+    const { spawnMinSeconds, spawnMaxSeconds } = COIN_DASH.shield;
+    this.shield.setVisible(false);
+    this.shield.body.enable = false;
+    this.shieldExpiresAt = Infinity;
+    this.nextShieldAt = this.time.now + Phaser.Math.Between(spawnMinSeconds * 1000, spawnMaxSeconds * 1000);
+  }
+
+  isShielded() {
+    return this.time.now < this.shieldUntil;
+  }
+
+  // Shows the shield pickup pulsing and the player glowing while invincible.
+  updateShield() {
+    const c = COIN_DASH;
+    const now = this.time.now;
+    if (this.shield.visible) {
+      if (now >= this.shieldExpiresAt) this.hideShield();
+      else this.shield.setScale(1 + 0.15 * Math.sin(now / 120));
+    } else if (now >= this.nextShieldAt) {
+      this.showShield();
+    }
+    const shielded = this.isShielded();
+    // Blink during the last second so the player knows the shield is about to drop.
+    const fading = shielded && this.shieldUntil - now < 1000 && Math.floor(now / 100) % 2 === 0;
+    this.player.setFillStyle(shielded && !fading ? c.colors.shieldedPlayer : c.colors.player);
+    this.halo.setVisible(shielded && !fading)
+      .setPosition(this.player.x, this.player.y)
+      .setScale(1 + 0.12 * Math.sin(now / 90));
   }
 
   // Sounds are synthesised with Web Audio, so the game still ships without audio assets.
@@ -113,8 +175,11 @@ class CoinDash extends Phaser.Scene {
       - Number(this.cursors.up.isDown || this.keys.W.isDown);
     const direction = new Phaser.Math.Vector2(dx, dy).normalize().scale(COIN_DASH.playerSpeed);
     this.player.body.setVelocity(direction.x, direction.y);
+    this.updateShield();
     const seconds = Math.max(0, Math.ceil((this.deadline - this.time.now) / 1000));
-    this.hud.setText(`Coins: ${this.score}                       Time: ${seconds}s`);
+    const shieldLeft = Math.ceil((this.shieldUntil - this.time.now) / 1000);
+    const shieldText = this.isShielded() ? `   Shield: ${shieldLeft}s` : '';
+    this.hud.setText(`Coins: ${this.score}                       Time: ${seconds}s${shieldText}`);
     if (seconds === 0) this.finish('Time is up!');
   }
 
