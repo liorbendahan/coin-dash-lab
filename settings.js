@@ -16,6 +16,8 @@ window.COIN_DASH = {
   // A shield appears every spawnMin..spawnMax seconds, stays for lifetime seconds,
   // and makes the player immune to drones for duration seconds once collected.
   shield: { spawnMinSeconds: 6, spawnMaxSeconds: 12, lifetimeSeconds: 6, durationSeconds: 5 },
+  // localStorage key for the best score, so it survives page reloads.
+  highScoreKey: 'coinDash.highScore',
   colors: {
     background: 0x101c31, player: 0x71e8ce, coin: 0xffd166, drone: 0xff657a, homingDrone: 0xb06cff,
     shield: 0x4da3ff, shieldedPlayer: 0xbfe0ff

@@ -5,6 +5,8 @@ class CoinDash extends Phaser.Scene {
   create() {
     const c = COIN_DASH;
     this.score = 0;
+    this.highScore = this.loadHighScore();
+    this.beatHighScore = false;
     this.finished = false;
     this.paused = false;
     this.deadline = this.time.now + c.roundSeconds * 1000;
@@ -38,6 +40,7 @@ class CoinDash extends Phaser.Scene {
     this.physics.add.overlap(this.player, this.coin, () => {
       if (this.finished) return;
       this.score++;
+      this.updateHighScore();
       this.playSound('coin');
       this.placeCoin();
       this.speedUpDrones();
@@ -106,6 +109,24 @@ class CoinDash extends Phaser.Scene {
     const drone = this.add.rectangle(x, y, 22, 22, c.colors.homingDrone).setAngle(45);
     this.homingDrones.add(drone);
     drone.body.setCollideWorldBounds(true);
+  }
+
+  // localStorage can throw (private mode, blocked storage), so fall back to 0 / skip saving.
+  loadHighScore() {
+    try {
+      return Number(localStorage.getItem(COIN_DASH.highScoreKey)) || 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  updateHighScore() {
+    if (this.score <= this.highScore) return;
+    this.highScore = this.score;
+    this.beatHighScore = true;
+    try {
+      localStorage.setItem(COIN_DASH.highScoreKey, String(this.highScore));
+    } catch (e) { /* Storage unavailable: keep the high score for this session only. */ }
   }
 
   placeCoin() {
@@ -205,7 +226,7 @@ class CoinDash extends Phaser.Scene {
     const seconds = Math.max(0, Math.ceil((this.deadline - this.time.now) / 1000));
     const shieldLeft = Math.ceil((this.shieldUntil - this.time.now) / 1000);
     const shieldText = this.isShielded() ? `   Shield: ${shieldLeft}s` : '';
-    this.hud.setText(`Coins: ${this.score}                       Time: ${seconds}s${shieldText}`);
+    this.hud.setText(`Coins: ${this.score}   High Score: ${this.highScore}             Time: ${seconds}s${shieldText}`);
     if (seconds === 0) this.finish('Time is up!');
   }
 
@@ -215,9 +236,10 @@ class CoinDash extends Phaser.Scene {
     this.physics.pause();
     this.homingTimer.remove();
     const c = COIN_DASH;
-    this.add.rectangle(c.width / 2, c.height / 2, 460, 150, 0x0a1120, 0.95);
+    const highScoreText = this.beatHighScore ? 'New high score!' : `High score: ${this.highScore}`;
+    this.add.rectangle(c.width / 2, c.height / 2, 460, 190, 0x0a1120, 0.95);
     this.add.text(c.width / 2, c.height / 2,
-      `${reason}\n${this.score} coins collected\nPress R to try again`,
+      `${reason}\n${this.score} coins collected\n${highScoreText}\nPress R to try again`,
       { font: '24px monospace', color: '#ffffff', align: 'center', lineSpacing: 12 }
     ).setOrigin(0.5);
   }
