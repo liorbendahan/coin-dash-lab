@@ -30,6 +30,7 @@ class CoinDash extends Phaser.Scene {
       if (this.finished) return;
       this.score++;
       this.placeCoin();
+      this.speedUpDrones();
     });
     this.physics.add.overlap(this.player, this.drones, () => this.finish('A drone caught you!'));
     this.cursors = this.input.keyboard.createCursorKeys();
@@ -47,6 +48,13 @@ class CoinDash extends Phaser.Scene {
     } while (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < 60);
     this.coin.setPosition(x, y);
     this.coin.body.reset(x, y);
+  }
+
+  speedUpDrones() {
+    const c = COIN_DASH;
+    // Each coin makes the drones a little faster, keeping their current heading.
+    const speed = Math.min(c.droneSpeed + this.score * c.droneSpeedPerCoin, c.droneMaxSpeed);
+    this.drones.getChildren().forEach(drone => drone.body.velocity.setLength(speed));
   }
 
   update() {
