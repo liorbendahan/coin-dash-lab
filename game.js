@@ -8,18 +8,23 @@ class CoinDash extends Phaser.Scene {
     const c = COIN_DASH;
     this.score = 0;
     this.finished = false;
+    this.paused = false;
     this.deadline = this.time.now + c.roundSeconds * 1000;
     this.physics.world.setBounds(0, 44, c.width, c.height - 44);
     this.createTextures();
     this.createBackground();
     this.createHud();
     this.halos = [];
+    this.droneTrails = [];
 
+    // The shield halo sits behind the player and is only shown while the shield is active.
+    this.shieldHalo = this.add.circle(c.width / 2, c.height / 2, 24, c.colors.shield, 0.35)
+      .setStrokeStyle(3, c.colors.shield).setVisible(false).setDepth(1);
     this.player = this.add.rectangle(c.width / 2, c.height / 2, 24, 24, c.colors.player).setDepth(2);
     this.physics.add.existing(this.player);
     this.player.body.setCollideWorldBounds(true);
-    this.playerHalo = this.addHalo(this.player, c.colors.player, 1.6);
-    this.trail = this.addTrail(this.player, c.colors.player, 0.45).setDepth(1);
+    this.addHalo(this.player, c.colors.player, 1.6);
+    this.trail = this.addTrail(this.player, c.colors.player, 0.45);
     this.trail.emitting = false;
 
     this.coin = this.add.circle(100, 100, 9, c.colors.coin).setDepth(2);
@@ -31,6 +36,13 @@ class CoinDash extends Phaser.Scene {
       .setScale(0.6).setBlendMode('ADD').setDepth(3));
     this.placeCoin();
 
+    this.shield = this.add.circle(0, 0, 11, c.colors.shield).setStrokeStyle(3, 0xffffff, 0.8).setDepth(2);
+    this.physics.add.existing(this.shield);
+    this.shield.body.setCircle(11);
+    this.addHalo(this.shield, c.colors.shield, 1.4);
+    this.hideShield();
+    this.shieldUntil = 0; // Time when the player's invincibility runs out.
+
     this.drones = this.physics.add.group();
     for (let i = 0; i < c.droneCount; i++) {
       const drone = this.add.rectangle(90 + i * 270, 100, 26, 26, c.colors.drone).setDepth(2);
@@ -38,8 +50,7 @@ class CoinDash extends Phaser.Scene {
       drone.body.setCollideWorldBounds(true).setBounce(1, 1);
       const angle = (35 + i * 105) * Math.PI / 180;
       drone.body.setVelocity(Math.cos(angle) * c.droneSpeed, Math.sin(angle) * c.droneSpeed);
-      this.addHalo(drone, c.colors.drone, 1.5);
-      this.addTrail(drone, c.colors.drone, 0.35).setDepth(1);
+      this.decorateDrone(drone, c.colors.drone, 1.5);
       // Spinning is purely visual: arcade bodies ignore rotation.
       this.tweens.add({ targets: drone, angle: 360, duration: 1800 + i * 400, repeat: -1 });
     }
@@ -55,16 +66,82 @@ class CoinDash extends Phaser.Scene {
       this.playSound('coin');
       this.celebrateCoin(this.coin.x, this.coin.y);
       this.placeCoin();
+      this.speedUpDrones();
+    });
+    this.physics.add.overlap(this.player, this.shield, () => {
+      if (this.finished || !this.shield.visible) return;
+      this.shieldUntil = this.time.now + c.shield.durationSeconds * 1000;
+      this.playSound('shield');
+      this.shockwave(this.shield.x, this.shield.y, c.colors.shield, 4, 420);
+      this.hideShield();
     });
     this.physics.add.overlap(this.player, this.drones, () => {
-      if (this.finished) return;
+      if (this.finished || this.isShielded()) return;
       this.playSound('hit');
       this.explodePlayer();
       this.finish('A drone caught you!');
     });
+    this.homingDrones = this.physics.add.group();
+    this.homingTimer = this.time.addEvent({
+      delay: c.homingSpawnSeconds * 1000, loop: true, callback: () => this.spawnHomingDrone()
+    });
+    this.physics.add.overlap(this.player, this.homingDrones, () => {
+      if (this.finished || this.isShielded()) return;
+      this.playSound('hit');
+      this.explodePlayer();
+      this.finish('A homing drone caught you!');
+    });
     this.cursors = this.input.keyboard.createCursorKeys();
     this.keys = this.input.keyboard.addKeys('W,A,S,D,R');
     this.input.keyboard.on('keydown-R', () => this.scene.restart());
+    this.input.keyboard.on('keydown-P', () => this.togglePause());
+    this.input.keyboard.on('keydown-ESC', () => this.togglePause());
+    this.pauseOverlay = this.add.container(c.width / 2, c.height / 2, [
+      this.add.rectangle(0, 0, 460, 150, 0x0a1120, 0.95).setStrokeStyle(2, c.colors.player),
+      this.add.text(0, 0, 'Paused\nPress P or ESC to resume',
+        { font: '24px monospace', color: '#ffffff', align: 'center', lineSpacing: 12 }).setOrigin(0.5)
+    ]).setDepth(20).setVisible(false);
+  }
+
+  togglePause() {
+    if (this.finished) return;
+    this.paused = !this.paused;
+    if (this.paused) {
+      this.pausedAt = this.time.now;
+      this.physics.pause();
+      this.tweens.pauseAll();
+      this.trail.emitting = false;
+    } else {
+      // Push the deadline back so time spent paused does not count against the round.
+      const pausedFor = this.time.now - this.pausedAt;
+      this.deadline += pausedFor;
+      // Shield timers freeze while paused too.
+      this.nextShieldAt += pausedFor;
+      this.shieldExpiresAt += pausedFor;
+      if (this.shieldUntil > this.pausedAt) this.shieldUntil += pausedFor;
+      this.physics.resume();
+      this.tweens.resumeAll();
+    }
+    // Stationary drones would pile their trail into a bright blob, so stop it while paused.
+    this.droneTrails.forEach(trail => { trail.emitting = !this.paused; });
+    this.homingTimer.paused = this.paused;
+    this.pauseOverlay.setVisible(this.paused);
+  }
+
+  spawnHomingDrone() {
+    const c = COIN_DASH;
+    if (this.finished || this.homingDrones.countActive() >= c.homingMaxCount) return;
+    // Spawn far enough from the player to give them a moment to react.
+    let x, y;
+    do {
+      x = Phaser.Math.Between(25, c.width - 25);
+      y = Phaser.Math.Between(70, c.height - 25);
+    } while (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < c.homingSpawnMinDistance);
+    const drone = this.add.rectangle(x, y, 22, 22, c.colors.homingDrone).setAngle(45).setDepth(2);
+    this.homingDrones.add(drone);
+    drone.body.setCollideWorldBounds(true);
+    this.decorateDrone(drone, c.colors.homingDrone, 1.4);
+    this.shockwave(x, y, c.colors.homingDrone, 4, 500);
   }
 
   // Textures are drawn at runtime, so the effects need no image assets.
@@ -108,11 +185,14 @@ class CoinDash extends Phaser.Scene {
     this.add.circle(28, 22, 8, c.colors.coin).setDepth(11);
     this.scoreText = this.add.text(44, 22, '0', { font: 'bold 20px monospace', color: hex(c.colors.coin) })
       .setOrigin(0, 0.5).setDepth(11);
+    this.shieldText = this.add.text(c.width / 2, 22, '', { font: 'bold 18px monospace', color: hex(c.colors.shield) })
+      .setOrigin(0.5).setDepth(11);
     this.timeText = this.add.text(c.width - 18, 22, '', { font: 'bold 20px monospace', color: '#ffffff' })
       .setOrigin(1, 0.5).setDepth(11);
     this.shownSeconds = null;
   }
 
+  // Halos follow their target and are hidden whenever it is.
   addHalo(target, color, scale) {
     const halo = this.add.image(target.x, target.y, 'glow')
       .setTint(color).setScale(scale).setAlpha(0.6).setBlendMode('ADD').setDepth(1);
@@ -125,7 +205,12 @@ class CoinDash extends Phaser.Scene {
       follow: target, frequency: 25, lifespan: 350, speed: 0,
       scale: { start: scale, end: 0 }, alpha: { start: 0.45, end: 0 },
       tint: color, blendMode: 'ADD'
-    });
+    }).setDepth(1);
+  }
+
+  decorateDrone(drone, color, haloScale) {
+    this.addHalo(drone, color, haloScale);
+    this.droneTrails.push(this.addTrail(drone, color, 0.35));
   }
 
   burstConfig({ speed, lifespan, scale }, tint) {
@@ -167,23 +252,68 @@ class CoinDash extends Phaser.Scene {
     this.hitBurst.explode(c.effects.hitBurst.count, x, y);
     this.shockwave(x, y, c.colors.drone, 7, 600);
     this.player.setVisible(false);
-    this.playerHalo.setVisible(false);
+    this.shieldHalo.setVisible(false);
   }
 
   placeCoin() {
+    this.placeAwayFromPlayer(this.coin);
+    // A ring collapsing onto the new coin draws the eye to where it appeared.
+    const ripple = this.add.circle(this.coin.x, this.coin.y, 10).setStrokeStyle(2, COIN_DASH.colors.coin)
+      .setScale(3.5).setAlpha(0).setDepth(3);
+    this.tweens.add({ targets: ripple, scale: 1, alpha: 1, duration: 280, ease: 'Quad.easeIn',
+      onComplete: () => ripple.destroy() });
+  }
+
+  // Avoid spawning items directly underneath the player.
+  placeAwayFromPlayer(item) {
     const c = COIN_DASH;
-    // Avoid spawning the next coin directly underneath the player.
     let x, y;
     do {
       x = Phaser.Math.Between(25, c.width - 25);
       y = Phaser.Math.Between(70, c.height - 25);
     } while (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < 60);
-    this.coin.setPosition(x, y);
-    this.coin.body.reset(x, y);
-    // A ring collapsing onto the new coin draws the eye to where it appeared.
-    const ripple = this.add.circle(x, y, 10).setStrokeStyle(2, c.colors.coin).setScale(3.5).setAlpha(0).setDepth(3);
-    this.tweens.add({ targets: ripple, scale: 1, alpha: 1, duration: 280, ease: 'Quad.easeIn',
-      onComplete: () => ripple.destroy() });
+    item.setPosition(x, y);
+    item.body.reset(x, y);
+  }
+
+  showShield() {
+    this.placeAwayFromPlayer(this.shield);
+    this.shield.setVisible(true);
+    this.shield.body.enable = true;
+    this.shieldExpiresAt = this.time.now + COIN_DASH.shield.lifetimeSeconds * 1000;
+  }
+
+  // Removes the shield item from the map and schedules the next one.
+  hideShield() {
+    const { spawnMinSeconds, spawnMaxSeconds } = COIN_DASH.shield;
+    this.shield.setVisible(false);
+    this.shield.body.enable = false;
+    this.shieldExpiresAt = Infinity;
+    this.nextShieldAt = this.time.now + Phaser.Math.Between(spawnMinSeconds * 1000, spawnMaxSeconds * 1000);
+  }
+
+  isShielded() {
+    return this.time.now < this.shieldUntil;
+  }
+
+  // Shows the shield pickup pulsing and the player glowing while invincible.
+  updateShield() {
+    const c = COIN_DASH;
+    const now = this.time.now;
+    if (this.shield.visible) {
+      if (now >= this.shieldExpiresAt) this.hideShield();
+      else this.shield.setScale(1 + 0.15 * Math.sin(now / 120));
+    } else if (now >= this.nextShieldAt) {
+      this.showShield();
+    }
+    const shielded = this.isShielded();
+    // Blink during the last second so the player knows the shield is about to drop.
+    const fading = shielded && this.shieldUntil - now < 1000 && Math.floor(now / 100) % 2 === 0;
+    this.player.setFillStyle(shielded && !fading ? c.colors.shieldedPlayer : c.colors.player);
+    this.shieldHalo.setVisible(shielded && !fading)
+      .setPosition(this.player.x, this.player.y)
+      .setScale(1 + 0.12 * Math.sin(now / 90));
+    this.shieldText.setText(shielded ? `Shield ${Math.ceil((this.shieldUntil - now) / 1000)}s` : '');
   }
 
   // Sounds are synthesised with Web Audio, so the game still ships without audio assets.
@@ -207,12 +337,19 @@ class CoinDash extends Phaser.Scene {
     }
   }
 
+  speedUpDrones() {
+    const c = COIN_DASH;
+    // Each coin makes the drones a little faster, keeping their current heading.
+    const speed = Math.min(c.droneSpeed + this.score * c.droneSpeedPerCoin, c.droneMaxSpeed);
+    this.drones.getChildren().forEach(drone => drone.body.velocity.setLength(speed));
+  }
+
   update(time) {
-    for (const [halo, target] of this.halos) halo.setPosition(target.x, target.y);
+    for (const [halo, target] of this.halos) halo.setPosition(target.x, target.y).setVisible(target.visible);
     const spin = time * 0.005;
     this.orbiters.forEach((o, i) => o.setPosition(
       this.coin.x + Math.cos(spin + i * Math.PI) * 17, this.coin.y + Math.sin(spin + i * Math.PI) * 17));
-    if (this.finished) return;
+    if (this.finished || this.paused) return;
     const c = COIN_DASH;
     const dx = Number(this.cursors.right.isDown || this.keys.D.isDown)
       - Number(this.cursors.left.isDown || this.keys.A.isDown);
@@ -221,6 +358,9 @@ class CoinDash extends Phaser.Scene {
     const direction = new Phaser.Math.Vector2(dx, dy).normalize().scale(c.playerSpeed);
     this.player.body.setVelocity(direction.x, direction.y);
     this.trail.emitting = dx !== 0 || dy !== 0;
+    this.homingDrones.getChildren().forEach(drone =>
+      this.physics.moveToObject(drone, this.player, c.homingSpeed));
+    this.updateShield();
     const remaining = Math.max(0, this.deadline - this.time.now);
     const seconds = Math.ceil(remaining / 1000);
     this.timeBar.scaleX = remaining / (c.roundSeconds * 1000);
@@ -240,7 +380,10 @@ class CoinDash extends Phaser.Scene {
     if (this.finished) return;
     this.finished = true;
     this.physics.pause();
+    this.homingTimer.remove();
     this.trail.emitting = false;
+    this.droneTrails.forEach(trail => { trail.emitting = false; });
+    this.shieldText.setText('');
     const c = COIN_DASH;
     const caught = this.player.visible === false;
     const accent = caught ? c.colors.drone : c.colors.coin;

@@ -1,6 +1,11 @@
 # Coin Dash — Lab 3 starter
 
-Collect coins, avoid drones, and survive a 45-second round. Move with arrow keys or WASD;
+Collect coins, avoid drones, and survive a 45-second round. Every coin makes the drones a
+little faster (tune `droneSpeedPerCoin` and `droneMaxSpeed` in `settings.js`). Every few seconds a purple
+homing drone appears and chases the player (tune the `homing*` settings). A blue shield appears now
+and then; collect it to glow blue and pass through drones for 5 seconds (tune `shield` in `settings.js`).
+Move with arrow keys or WASD;
+press P or ESC to pause and resume;
 press R to restart. This is deliberately small so you can add features during the lab.
 
 **Play it here:** https://www.avivz.net/coin-dash/
